@@ -18,7 +18,7 @@
   const K = {
     history: 'chatgpt_history_v3',
     text: 'chatgpt_text_v1',
-    settings: 'chatgpt_settings_v6',    // v6: +forceNewClick
+    settings: 'chatgpt_settings_v6',    // v6: +forceNewClick etc.
     quick: 'chatgpt_quick_actions_v2',
     prompts: 'chatgpt_prompts_v2',
     intent: 'chatgpt_intent_v1',        // { mode: 'new' | 'append' }
@@ -388,94 +388,141 @@
     }
   }
 
-  // --------------------------- UI: Menu Mount ---------------------------
+  // --------------------------- UI: Menü-Redesign ---------------------------
   function mountMenu(inputDiv, ctx) {
     const { settings } = ctx;
     const theme = palette(settings.theme);
     const sz = sizeVars(settings.size);
 
+    // Persistente Breite (nur Breite, Höhe dynamisch mit max-height)
+    const WIDTH_KEY = 'menu_w';
+
+    // Design-CSS injizieren
+    (function injectMenuCSS() {
+      const existing = document.getElementById('cgpt-menu-style');
+      const bg = theme.card, fg = theme.fg, subtle = theme.subtle, border = theme.border, hover = theme.hover, shadow = theme.shadow, accent = theme.accent;
+      const css = `
+      .cgpt-menu{position:fixed;inset:auto auto 20px 20px;background:${bg};color:${fg};border:1px solid ${border};border-radius:14px;box-shadow:${shadow};z-index:999999;font-family:Inter,system-ui,Arial,sans-serif;font-size:${sz.font};display:flex;gap:0;overflow:hidden}
+      .cgpt-sidebar{display:flex;flex-direction:column;gap:6px;padding:10px;background:${theme.bg};border-right:1px solid ${border};min-width:48px;align-items:center}
+      .cgpt-tab{width:36px;height:36px;border:1px solid ${border};border-radius:10px;background:transparent;color:${fg};cursor:pointer;display:flex;align-items:center;justify-content:center}
+      .cgpt-tab:hover{background:${hover}}
+      .cgpt-tab.active{background:${subtle}}
+      .cgpt-main{display:flex;flex-direction:column;min-width:260px;max-width:520px}
+      .cgpt-header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid ${border};cursor:move}
+      .cgpt-title{font-weight:700}
+      .cgpt-actions{display:flex;align-items:center;gap:8px}
+      .cgpt-toggle{display:flex;align-items:center;gap:6px;border:1px solid ${border};border-radius:999px;padding:4px 8px;background:transparent}
+      .cgpt-toggle input{accent-color:${accent}}
+      .cgpt-content{padding:10px 12px;max-height:70vh;overflow:auto}
+      .cgpt-section{display:grid;gap:8px;margin-bottom:12px}
+      .cgpt-h3{font-size:12px;letter-spacing:.02em;opacity:.8;text-transform:uppercase}
+      .cgpt-grid{display:grid;gap:8px}
+      @media (min-width: 820px){ .cgpt-grid.cols-2{grid-template-columns:1fr 1fr} }
+      .cgpt-footer{padding:10px 12px;border-top:1px solid ${border};position:sticky;bottom:0;background:${bg};backdrop-filter:saturate(120%) blur(3px)}
+      .cgpt-resizer{position:absolute;right:6px;bottom:6px;width:14px;height:14px;cursor:ew-resize;opacity:.6}
+      .cgpt-resizer::after{content:"";display:block;width:100%;height:100%;border-right:2px solid ${border};border-bottom:2px solid ${border};border-radius:2px;transform:rotate(45deg)}
+      .cgpt-search{width:100%;padding:8px;border:1px solid ${border};border-radius:8px;background:transparent;color:${fg};outline:none}
+      .cgpt-search:focus{box-shadow:inset 0 0 0 2px ${border}}
+      `;
+      if (existing) { existing.textContent = css; return; }
+      const style = document.createElement('style');
+      style.id = 'cgpt-menu-style';
+      style.textContent = css;
+      document.head.appendChild(style);
+    })();
+
     // Container
     const menu = document.createElement('div');
+    menu.className = 'cgpt-menu';
     const savedLeft = get(K.menuPos.left, null);
-    const savedTop = get(K.menuPos.top, null);
-
+    const savedTop  = get(K.menuPos.top, null);
+    const savedW    = get(WIDTH_KEY, null);
     Object.assign(menu.style, {
-      position: 'fixed',
       left: savedLeft !== null ? `${savedLeft}px` : '',
-      top: savedTop !== null ? `${savedTop}px` : '',
+      top:  savedTop  !== null ? `${savedTop}px`  : '',
       right: savedLeft === null ? '20px' : '',
       ...(savedTop === null ? { top: '20px' } : {}),
-      background: theme.card,
-      color: theme.fg,
-      padding: sz.pad,
-      borderRadius: sz.radius,
-      border: `1px solid ${theme.border}`,
-      boxShadow: theme.shadow,
-      zIndex: 999999,
-      fontFamily: 'Inter, system-ui, Arial, sans-serif',
-      fontSize: sz.font,
-      width: 'fit-content',
-      maxWidth: sz.maxW,
-      minWidth: '260px',
-      userSelect: 'none'
+      width: savedW ? `${Math.max(260, Number(savedW)||360)}px` : '360px'
     });
 
-    // Header (drag)
+    // Sidebar (Tabs)
+    const sidebar = document.createElement('div');
+    sidebar.className = 'cgpt-sidebar';
+    const tabs = [
+      { key: 'actions', label: 'Aktionen', icon: '⚡' },
+      { key: 'prompts', label: 'Prompts',  icon: '✍️' },
+      { key: 'history', label: 'History',  icon: '🕒' },
+      { key: 'settings',label: 'Einstellungen', icon: '⚙️' }
+    ];
+    const contentAreas = {}; // WICHTIG: nur einmal deklarieren!
+    let activeKey = 'actions';
+    const tabButtons = {};
+    tabs.forEach((t, i) => {
+      const b = document.createElement('button');
+      b.className = 'cgpt-tab' + (i===0 ? ' active' : '');
+      b.title = t.label;
+      b.textContent = t.icon;
+      b.addEventListener('click', () => {
+        activeKey = t.key;
+        for (const k in tabButtons) tabButtons[k].classList.toggle('active', k === activeKey);
+        for (const k in contentAreas) contentAreas[k].style.display = (k === activeKey ? 'block' : 'none');
+      });
+      tabButtons[t.key] = b;
+      sidebar.appendChild(b);
+    });
+
+    // Main (Header + Content + Footer)
+    const main = document.createElement('div');
+    main.className = 'cgpt-main';
+
+    // Header
     const header = document.createElement('div');
-    header.style.display = 'flex';
-    header.style.alignItems = 'center';
-    header.style.justifyContent = 'space-between';
-    header.style.marginBottom = '8px';
-    header.style.fontWeight = '600';
-    header.style.cursor = 'move';
-    header.innerHTML = `<span>⚡ ChatGPT Menü</span>`;
-    const btnRow = document.createElement('div');
+    header.className = 'cgpt-header';
+    const title = document.createElement('div');
+    title.className = 'cgpt-title';
+    title.textContent = 'ChatGPT Tools';
+
+    const actions = document.createElement('div');
+    actions.className = 'cgpt-actions';
+
+    function quickToggle(label, checked, onChange) {
+      const wrap = document.createElement('label');
+      wrap.className = 'cgpt-toggle';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !!checked;
+      cb.addEventListener('change', () => onChange(!!cb.checked));
+      const span = document.createElement('span');
+      span.textContent = label;
+      wrap.appendChild(cb); wrap.appendChild(span);
+      return wrap;
+    }
+    const tglAuto = quickToggle('Auto', !!settings.autoSubmit, (v) => {
+      const s = loadSettings(); s.autoSubmit = v; saveSettings(s);
+    });
+    const tglNew  = quickToggle('New', !!settings.forceNewClick, (v) => {
+      const s = loadSettings(); s.forceNewClick = v; saveSettings(s);
+    });
 
     const btnMin = iconBtn('−', theme);
     const btnClose = iconBtn('×', theme);
-    btnRow.appendChild(btnMin);
-    btnRow.appendChild(btnClose);
-    header.appendChild(btnRow);
-    menu.appendChild(header);
+    actions.appendChild(tglAuto);
+    actions.appendChild(tglNew);
+    actions.appendChild(btnMin);
+    actions.appendChild(btnClose);
+    header.appendChild(title);
+    header.appendChild(actions);
 
-    // Tabs
-    const tabBar = document.createElement('div');
-    tabBar.style.display = 'flex';
-    tabBar.style.gap = '6px';
-    tabBar.style.marginBottom = '8px';
-
-    const tabs = [
-      { key: 'actions', label: 'Aktionen' },
-      { key: 'prompts', label: 'Prompts' },
-      { key: 'history', label: 'History' },
-      { key: 'settings', label: 'Einstellungen' }
-    ];
-
+    // Content
     const content = document.createElement('div');
-    const contentAreas = {}; // <<< WICHTIG: nur EINMAL deklarieren!
-    menu.appendChild(tabBar);
-    menu.appendChild(content);
+    content.className = 'cgpt-content';
 
-    tabs.forEach((t, i) => {
-      const tb = document.createElement('button');
-      styleTab(tb, theme);
-      tb.textContent = t.label;
-      if (i === 0) { tb.dataset.active = '1'; tb.style.background = theme.subtle; }
-      tb.addEventListener('click', () => {
-        [...tabBar.children].forEach(b => { b.dataset.active = '0'; b.style.background = 'transparent'; b.style.boxShadow='none'; });
-        tb.dataset.active = '1'; tb.style.background = theme.subtle;
-        Object.values(contentAreas).forEach(el => el.style.display = 'none');
-        contentAreas[t.key].style.display = 'block';
-      });
-      tabBar.appendChild(tb);
-    });
-
-    // --- Tab: Aktionen (Quick Actions) ---
+    // --- Aktionen ---
     const actionsEl = document.createElement('div');
-    const quickWrap = document.createElement('div');
-    quickWrap.style.display = 'grid';
-    quickWrap.style.gridTemplateColumns = '1fr';
-    quickWrap.style.gap = '6px';
+    actionsEl.className = 'cgpt-section';
+    const actionsH3 = document.createElement('div'); actionsH3.className = 'cgpt-h3'; actionsH3.textContent = 'Quick-Aktionen';
+    const qaSearch = document.createElement('input'); qaSearch.className='cgpt-search'; qaSearch.placeholder='Quick-Aktionen filtern…';
+    const quickWrap = document.createElement('div'); quickWrap.className = 'cgpt-grid cols-2';
 
     function doInsertAndMaybeSend(textToInsert) {
       if (!inputDiv) return;
@@ -484,104 +531,81 @@
       if (ctx.settings.autoSubmit) { trySubmit(); toast('Gesendet ✔'); }
       else { toast('Eingefügt ✔'); }
     }
-    function showPreview(text) { previewBox.style.display = 'block'; previewArea.value = text; previewArea.scrollTop = 0; }
-
+    function showPreview(text) {
+      previewBox.style.display = 'block';
+      previewArea.value = text;
+      previewArea.scrollTop = 0;
+    }
     function renderQuick() {
       quickWrap.innerHTML = '';
+      const filter = (qaSearch.value || '').trim().toLowerCase();
       const quick = loadQuick();
       if (!quick.length) {
         quickWrap.appendChild(emptyNote('Keine Quick-Aktionen. Füge unten welche hinzu.', theme));
       } else {
-        quick.forEach((qa, idx) => {
-          const row = document.createElement('div');
-          row.style.display = 'grid';
-          row.style.gridTemplateColumns = '1fr auto auto auto';
-          row.style.gap = '6px';
-          const b = solidBtn(qa.label, theme);
-          b.style.textAlign = 'left';
-          b.title = 'Klick: Einfügen • Shift+Klick: Vorschau';
-          b.addEventListener('click', (ev) => {
-            const sel = cleanSelection(ctx.selectedText || '');
-            const final = combineSelectionWith(qa.addon, sel);
-            if (ev.shiftKey) { showPreview(renderTpl(final, { sel })); return; }
-            doInsertAndMaybeSend(renderTpl(final, { sel }));
+        quick
+          .map((q, i) => ({...q, i}))
+          .filter(q => !filter || q.label.toLowerCase().includes(filter) || (q.addon||'').toLowerCase().includes(filter))
+          .forEach((qa) => {
+            const row = document.createElement('div');
+            row.className = 'cgpt-grid';
+            const b = solidBtn(qa.label, theme);
+            b.style.textAlign = 'left';
+            b.title = 'Klick: Einfügen • Shift+Klick: Vorschau';
+            b.addEventListener('click', (ev) => {
+              const sel = cleanSelection(ctx.selectedText || '');
+              const final = combineSelectionWith(qa.addon, sel);
+              if (ev.shiftKey) { showPreview(renderTpl(final, { sel })); return; }
+              doInsertAndMaybeSend(renderTpl(final, { sel }));
+            });
+
+            const rowBtns = document.createElement('div');
+            rowBtns.style.display='flex'; rowBtns.style.gap='6px';
+            const up = miniBtn('↑', theme);
+            const down = miniBtn('↓', theme);
+            const del = miniBtn('🗑', theme);
+
+            up.onclick = () => { const arr = loadQuick(); const i = qa.i; if (i>0){ [arr[i-1],arr[i]]=[arr[i],arr[i-1]]; saveQuick(arr); renderQuick(); } };
+            down.onclick = () => { const arr = loadQuick(); const i = qa.i; if (i<arr.length-1){ [arr[i+1],arr[i]]=[arr[i],arr[i+1]]; saveQuick(arr); renderQuick(); } };
+            del.onclick = () => { const arr = loadQuick(); arr.splice(qa.i,1); saveQuick(arr); renderQuick(); };
+
+            rowBtns.appendChild(up); rowBtns.appendChild(down); rowBtns.appendChild(del);
+            row.appendChild(b); row.appendChild(rowBtns);
+            quickWrap.appendChild(row);
           });
-
-          const up = miniBtn('↑', theme);
-          const down = miniBtn('↓', theme);
-          const del = miniBtn('🗑', theme);
-
-          up.onclick = () => { const arr = loadQuick(); if (idx > 0) { [arr[idx-1],arr[idx]]=[arr[idx],arr[idx-1]]; saveQuick(arr); renderQuick(); } };
-          down.onclick = () => { const arr = loadQuick(); if (idx < arr.length-1) { [arr[idx+1],arr[idx]]=[arr[idx],arr[idx+1]]; saveQuick(arr); renderQuick(); } };
-          del.onclick = () => { const arr = loadQuick(); arr.splice(idx,1); saveQuick(arr); renderQuick(); };
-
-          row.appendChild(b); row.appendChild(up); row.appendChild(down); row.appendChild(del);
-          quickWrap.appendChild(row);
-        });
       }
     }
-    renderQuick();
+    qaSearch.addEventListener('input', renderQuick);
 
+    // Quick hinzufügen
+    const qaAdd = document.createElement('div'); qaAdd.className = 'cgpt-section';
+    const qaAddH3 = document.createElement('div'); qaAddH3.className = 'cgpt-h3'; qaAddH3.textContent = 'Neue Quick-Aktion';
     const qaLabel = textInput('Name der Aktion …', theme);
-    const qaAddon = textInput('Text/Anweisung (Platzhalter ok: {SELECTION}, {URL}, {TITLE}, {TIME}, {LANG}) …', theme);
-    const qaAddBtn = outlineBtn('➕ Quick-Aktion hinzufügen', theme);
+    const qaAddon = textInput('Text/Anweisung (Platzhalter ok: {SELECTION},{URL},{TITLE},{TIME},{LANG}) …', theme);
+    const qaAddBtn = outlineBtn('➕ Hinzufügen', theme);
     qaAddBtn.onclick = () => {
       const label = qaLabel.value.trim(); const addon = qaAddon.value.trim();
       if (!label || !addon) return;
       const arr = loadQuick(); arr.push({ label, addon }); saveQuick(arr);
-      qaLabel.value=''; qaAddon.value=''; renderQuick();
+      qaLabel.value = ''; qaAddon.value = ''; renderQuick();
     };
 
+    actionsEl.appendChild(actionsH3);
+    actionsEl.appendChild(qaSearch);
     actionsEl.appendChild(quickWrap);
     actionsEl.appendChild(divider(theme));
+    actionsEl.appendChild(qaAddH3);
     actionsEl.appendChild(qaLabel);
     actionsEl.appendChild(qaAddon);
     actionsEl.appendChild(qaAddBtn);
 
-    // --- Tab: Prompts ---
+    // --- Prompts ---
     const promptsEl = document.createElement('div');
-    promptsEl.style.display = 'grid';
-    promptsEl.style.gap = '8px';
-
-    const search = textInput('Prompts durchsuchen …', theme);
+    promptsEl.className = 'cgpt-section';
+    const pH3 = document.createElement('div'); pH3.className = 'cgpt-h3'; pH3.textContent = 'Prompts';
+    const search = document.createElement('input'); search.className='cgpt-search'; search.placeholder='Prompts durchsuchen …';
     const categorySelect = selectInput(theme);
-    const promptList = document.createElement('div');
-    promptList.style.display = 'grid';
-    promptList.style.gap = '6px';
-
-    const addCatRow = document.createElement('div');
-    addCatRow.style.display = 'grid';
-    addCatRow.style.gridTemplateColumns = '1fr auto';
-    addCatRow.style.gap = '6px';
-    const newCat = textInput('Neue Kategorie …', theme);
-    const addCatBtn = outlineBtn('Kategorie hinzufügen', theme);
-    addCatBtn.onclick = () => {
-      const name = newCat.value.trim(); if (!name) return;
-      const arr = loadPrompts();
-      if (arr.some(c => c.category.toLowerCase() === name.toLowerCase())) { alert('Kategorie existiert bereits.'); return; }
-      arr.push({ category: name, items: [] }); savePrompts(arr); newCat.value=''; renderCategories(); renderPromptList();
-    };
-    addCatRow.appendChild(newCat); addCatRow.appendChild(addCatBtn);
-
-    const addPromptRow = document.createElement('div');
-    addPromptRow.style.display = 'grid';
-    addPromptRow.style.gridTemplateColumns = '1fr auto';
-    addPromptRow.style.gap = '6px';
-    const newPrompt = textInput('Neuen Prompt eingeben (Platzhalter ok) …', theme);
-    const addPromptBtn = outlineBtn('Prompt speichern', theme);
-    addPromptBtn.onclick = () => {
-      const txt = newPrompt.value.trim(); if (!txt) return;
-      const arr = loadPrompts(); const cat = getSelectedCategory(arr);
-      cat.items.push(txt); savePrompts(arr); newPrompt.value=''; renderPromptList();
-    };
-    addPromptRow.appendChild(newPrompt); addPromptRow.appendChild(addPromptBtn);
-
-    promptsEl.appendChild(search);
-    promptsEl.appendChild(categorySelect);
-    promptsEl.appendChild(promptList);
-    promptsEl.appendChild(divider(theme));
-    promptsEl.appendChild(addCatRow);
-    promptsEl.appendChild(addPromptRow);
+    const promptList = document.createElement('div'); promptList.className = 'cgpt-grid cols-2';
 
     function getSelectedCategory(arr) {
       const sel = categorySelect.value;
@@ -612,13 +636,9 @@
       } else {
         items.forEach((txt) => {
           const realIdx = cat.items.indexOf(txt);
-          const row = document.createElement('div');
-          row.style.display = 'grid';
-          row.style.gridTemplateColumns = '1fr auto auto';
-          row.style.gap = '6px';
-
-          const b = solidBtn(txt.length > 50 ? txt.slice(0, 50) + '…' : txt, theme);
-          b.style.textAlign = 'left';
+          const row = document.createElement('div'); row.className='cgpt-grid';
+          const b = solidBtn(txt.length > 64 ? txt.slice(0,64)+'…' : txt, theme);
+          b.style.textAlign='left';
           b.title = 'Klick: Einfügen • Shift+Klick: Vorschau';
           b.onclick = (ev) => {
             const sel = cleanSelection(ctx.selectedText || '');
@@ -626,30 +646,59 @@
             if (ev.shiftKey) { showPreview(renderTpl(final, { sel })); return; }
             doInsertAndMaybeSend(renderTpl(final, { sel }));
           };
-
+          const rowBtns = document.createElement('div'); rowBtns.style.display='flex'; rowBtns.style.gap='6px';
+          const copy = miniBtn('⎘', theme);
           const del = miniBtn('🗑', theme);
+          copy.onclick = () => navigator.clipboard?.writeText(txt);
           del.onclick = () => {
             const arr2 = loadPrompts(); const cat2 = getSelectedCategory(arr2);
             cat2.items.splice(realIdx, 1); savePrompts(arr2); renderPromptList();
           };
-          const copy = miniBtn('⎘', theme);
-          copy.onclick = () => navigator.clipboard?.writeText(txt);
-
-          row.appendChild(b); row.appendChild(copy); row.appendChild(del);
+          rowBtns.appendChild(copy); rowBtns.appendChild(del);
+          row.appendChild(b); row.appendChild(rowBtns);
           promptList.appendChild(row);
         });
       }
     }
     search.addEventListener('input', renderPromptList);
     categorySelect.addEventListener('change', renderPromptList);
-    renderCategories();
-    renderPromptList();
 
-    // --- Tab: History ---
+    const addCatRow = document.createElement('div'); addCatRow.className='cgpt-grid';
+    const newCat = textInput('Neue Kategorie …', theme);
+    const addCatBtn = outlineBtn('Kategorie hinzufügen', theme);
+    addCatBtn.onclick = () => {
+      const name = newCat.value.trim(); if (!name) return;
+      const arr = loadPrompts();
+      if (arr.some(c => c.category.toLowerCase() === name.toLowerCase())) { alert('Kategorie existiert bereits.'); return; }
+      arr.push({ category: name, items: [] }); savePrompts(arr); newCat.value=''; renderCategories(); renderPromptList();
+    };
+    addCatRow.appendChild(newCat); addCatRow.appendChild(addCatBtn);
+
+    const addPromptRow = document.createElement('div'); addPromptRow.className='cgpt-grid';
+    const newPrompt = textInput('Neuen Prompt eingeben (Platzhalter ok) …', theme);
+    const addPromptBtn = outlineBtn('Prompt speichern', theme);
+    addPromptBtn.onclick = () => {
+      const txt = newPrompt.value.trim(); if (!txt) return;
+      const arr = loadPrompts(); const cat = getSelectedCategory(arr);
+      cat.items.push(txt); savePrompts(arr); newPrompt.value=''; renderPromptList();
+    };
+    addPromptRow.appendChild(newPrompt); addPromptRow.appendChild(addPromptBtn);
+
+    promptsEl.appendChild(pH3);
+    promptsEl.appendChild(search);
+    promptsEl.appendChild(categorySelect);
+    promptsEl.appendChild(promptList);
+    promptsEl.appendChild(divider(theme));
+    promptsEl.appendChild(addCatRow);
+    promptsEl.appendChild(addPromptRow);
+    renderCategories(); renderPromptList();
+
+    // --- History ---
     const historyEl = document.createElement('div');
-    const histSearch = textInput('History durchsuchen …', theme);
-    histSearch.style.marginBottom = '6px';
-    historyEl.appendChild(histSearch);
+    historyEl.className = 'cgpt-section';
+    const hH3 = document.createElement('div'); hH3.className='cgpt-h3'; hH3.textContent='History';
+    const histSearch = document.createElement('input'); histSearch.className='cgpt-search'; histSearch.placeholder='History durchsuchen …';
+    historyEl.appendChild(hH3); historyEl.appendChild(histSearch);
 
     function sortedHistory(filterQ='') {
       const q = filterQ.trim().toLowerCase();
@@ -663,125 +712,100 @@
       out.sort((a, b) => (b.pinned - a.pinned) || (b.timeMs - a.timeMs));
       return out;
     }
-
     function renderHistoryList() {
-      const listWrap = document.createElement('div');
-      listWrap.style.display = 'grid';
-      listWrap.style.gap = '6px';
+      const listWrap = document.createElement('div'); listWrap.className='cgpt-grid';
       const hist = sortedHistory(histSearch.value);
-
       if (!hist.length) {
         listWrap.appendChild(emptyNote('Noch keine (passenden) History-Einträge.', theme));
       } else {
         hist.forEach((h) => {
-          const wrap = document.createElement('details');
-          wrap.style.background = theme.bg;
-          wrap.style.border = `1px solid ${theme.border}`;
-          wrap.style.borderRadius = '8px';
-          wrap.style.padding = '6px';
-
-          const sum = document.createElement('summary');
-          sum.style.cursor = 'pointer';
-          sum.textContent = `${h.time || ''} — ${h.text.slice(0, 60)}${h.text.length > 60 ? '…' : ''}`;
-          wrap.appendChild(sum);
-
-          const body = document.createElement('div');
-          body.style.marginTop = '6px';
-          body.style.display = 'grid';
-          body.style.gap = '6px';
-
-          const textArea = document.createElement('textarea');
-          textArea.readOnly = true;
-          textArea.value = h.text;
-          Object.assign(textArea.style, {
-            width:'100%', height:'80px',
-            background: theme.card, color: theme.fg,
-            border:`1px solid ${theme.border}`, borderRadius:'6px',
-            padding:'6px', resize:'vertical', outline:'none'
+          const card = document.createElement('details');
+          Object.assign(card.style, {
+            background: theme.bg, border:`1px solid ${theme.border}`, borderRadius:'10px', padding:'6px'
           });
+          const sum = document.createElement('summary');
+          sum.style.cursor='pointer';
+          sum.textContent = `${h.time || ''} — ${h.text.slice(0, 60)}${h.text.length > 60 ? '…' : ''}`;
+          const body = document.createElement('div'); body.className='cgpt-grid';
+          const ta = document.createElement('textarea');
+          Object.assign(ta.style, { width:'100%', height:'80px', background:theme.card, color:theme.fg, border:`1px solid ${theme.border}`, borderRadius:'6px', padding:'6px', resize:'vertical', outline:'none' });
+          ta.readOnly = true; ta.value = h.text;
 
-          const row = document.createElement('div');
-          row.style.display = 'flex';
-          row.style.gap = '6px';
-          row.style.flexWrap = 'wrap';
-
+          const row = document.createElement('div'); row.style.display='flex'; row.style.gap='6px'; row.style.flexWrap='wrap';
           const insertBtn = outlineBtn('🔄 Einfügen', theme);
           insertBtn.onclick = () => { if (inputDiv) doInsertAndMaybeSend(h.text); };
-
           const copyBtn = outlineBtn('⎘ Kopieren', theme);
           copyBtn.onclick = () => navigator.clipboard?.writeText(h.text);
-
           const pinBtn = outlineBtn(h.pinned ? '📌 Unpin' : '📌 Pin', theme);
           pinBtn.onclick = () => {
             const all = loadHistory();
             const ix = all.findIndex(x => (x.timeMs||0) === (h.timeMs||0) && x.text === h.text);
             if (ix >= 0) { all[ix].pinned = !all[ix].pinned; saveHistory(all); }
-            historyEl.replaceChildren(histSearch, divider(theme), renderHistoryList(), divider(theme), clearAllBtn);
+            historyEl.replaceChildren(hH3, histSearch, divider(theme), renderHistoryList(), divider(theme), clearAllBtn);
           };
-
           const delBtn = outlineBtn('🗑 Löschen', theme);
           delBtn.onclick = () => {
             const all = loadHistory();
             const ix = all.findIndex(x => (x.timeMs||0) === (h.timeMs||0) && x.text === h.text);
             if (ix >= 0) { all.splice(ix, 1); saveHistory(all); }
-            historyEl.replaceChildren(histSearch, divider(theme), renderHistoryList(), divider(theme), clearAllBtn);
+            historyEl.replaceChildren(hH3, histSearch, divider(theme), renderHistoryList(), divider(theme), clearAllBtn);
           };
 
           row.appendChild(insertBtn); row.appendChild(copyBtn); row.appendChild(pinBtn); row.appendChild(delBtn);
-
-          body.appendChild(textArea); body.appendChild(row);
-          wrap.appendChild(body);
-          listWrap.appendChild(wrap);
+          body.appendChild(ta); body.appendChild(row);
+          card.appendChild(sum); card.appendChild(body);
+          listWrap.appendChild(card);
         });
       }
       return listWrap;
     }
-
     const clearAllBtn = outlineBtn('🧹 History leeren', theme);
     clearAllBtn.onclick = () => {
       if (confirm('Wirklich die gesamte History löschen?')) {
         saveHistory([]);
-        historyEl.replaceChildren(histSearch, divider(theme), renderHistoryList(), divider(theme), clearAllBtn);
+        historyEl.replaceChildren(hH3, histSearch, divider(theme), renderHistoryList(), divider(theme), clearAllBtn);
       }
     };
-
     histSearch.addEventListener('input', () => {
-      historyEl.replaceChildren(histSearch, divider(theme), renderHistoryList(), divider(theme), clearAllBtn);
+      historyEl.replaceChildren(hH3, histSearch, divider(theme), renderHistoryList(), divider(theme), clearAllBtn);
     });
     historyEl.appendChild(divider(theme));
     historyEl.appendChild(renderHistoryList());
     historyEl.appendChild(divider(theme));
     historyEl.appendChild(clearAllBtn);
 
-    // --- Tab: Einstellungen ---
+    // --- Einstellungen ---
     const settingsEl = buildSettingsTab(ctx, theme);
 
-    // ---- Footer: Vorschau + Freier Prompt ----
-    const previewTip = document.createElement('div');
-    previewTip.style.opacity = '0.8';
-    previewTip.textContent = 'Tipp: Shift+Klick auf Quick/Prompt zeigt nur die Vorschau.';
-    previewTip.style.margin = '6px 0';
+    // Register Tabs
+    const contentAreasLocal = { actions: actionsEl, prompts: promptsEl, history: historyEl, settings: settingsEl };
+    for (const k in contentAreasLocal) {
+      contentAreas[k] = contentAreasLocal[k];
+      content.appendChild(contentAreasLocal[k]);
+      contentAreasLocal[k].style.display = (k === activeKey ? 'block' : 'none');
+    }
 
-    const previewBox = document.createElement('div');
-    previewBox.style.display = 'none';
+    // Footer (sticky) mit Vorschau + freier Prompt
+    const footer = document.createElement('div'); footer.className='cgpt-footer';
+    const previewTip = document.createElement('div'); previewTip.style.opacity='.8'; previewTip.textContent='Tipp: Shift+Klick auf Quick/Prompt zeigt Vorschau.';
+    const previewBox = document.createElement('div'); previewBox.style.display='none';
     const previewArea = document.createElement('textarea');
     Object.assign(previewArea.style, {
       width:'100%', height:'100px', background: theme.card, color: theme.fg,
       border:`1px solid ${theme.border}`, borderRadius:'6px', padding:'6px', resize:'vertical'
     });
+    previewBox.appendChild(previewArea);
 
     const freeRow = document.createElement('div');
-    freeRow.style.display = 'grid';
-    freeRow.style.gridTemplateColumns = '1fr auto auto';
-    freeRow.style.gap = '6px';
-    const freeInput = textInput('Eigenen Prompt eingeben (Platzhalter ok) …', theme);
+    freeRow.style.display='grid'; freeRow.style.gridTemplateColumns='1fr auto auto'; freeRow.style.gap='6px';
+    const freeInput = textInput('Eigenen Prompt (Platzhalter ok) …', theme);
     const freePreviewBtn = outlineBtn('👁 Vorschau', theme);
     const freeBtn = solidBtn('➤ Anwenden', theme);
     freePreviewBtn.onclick = () => {
       const sel = cleanSelection(ctx.selectedText || '');
       const final = combineSelectionWith(freeInput.value, sel);
       const rendered = renderTpl(final, { sel });
-      previewBox.style.display = 'block'; previewArea.value = rendered; previewArea.scrollTop = 0;
+      previewBox.style.display='block'; previewArea.value = rendered; previewArea.scrollTop = 0;
     };
     freeBtn.onclick = () => {
       const sel = cleanSelection(ctx.selectedText || '');
@@ -790,48 +814,60 @@
       doInsertAndMaybeSend(renderTpl(final, { sel }));
     };
 
-    // ---- Register Tabs (FIX: NICHT erneut deklarieren)
-    contentAreas.actions  = actionsEl;
-    contentAreas.prompts  = promptsEl;
-    contentAreas.history  = historyEl;
-    contentAreas.settings = settingsEl;
+    const resizer = document.createElement('div');
+    resizer.className = 'cgpt-resizer';
+    resizer.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = menu.getBoundingClientRect().width;
+      function onMove(ev){
+        const dw = ev.clientX - startX;
+        const w = Math.max(260, Math.min(560, Math.round(startW + dw)));
+        menu.style.width = w + 'px';
+      }
+      function onUp(){
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp, true);
+        const w = Math.round(menu.getBoundingClientRect().width);
+        set('menu_w', w);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp, true);
+    });
 
-    content.appendChild(actionsEl);
-    content.appendChild(promptsEl);
-    content.appendChild(historyEl);
-    content.appendChild(settingsEl);
+    const shell = document.createElement('div'); // enthält Header/Content/Footer + Resizer
+    shell.style.position = 'relative';
+    shell.appendChild(resizer);
+    shell.appendChild(header);
+    shell.appendChild(content);
 
-    // Sichtbarkeit
-    promptsEl.style.display = 'none';
-    historyEl.style.display = 'none';
-    settingsEl.style.display = 'none';
-
-    // Footer
-    content.appendChild(divider(theme));
-    content.appendChild(previewTip);
-    content.appendChild(previewBox);
-    previewBox.appendChild(previewArea);
-    content.appendChild(divider(theme));
+    const dividerEl = divider(theme);
+    footer.appendChild(previewTip);
+    footer.appendChild(previewBox);
+    footer.appendChild(dividerEl.cloneNode(true));
+    footer.appendChild(freeRow);
     freeRow.appendChild(freeInput);
     freeRow.appendChild(freePreviewBtn);
     freeRow.appendChild(freeBtn);
-    content.appendChild(freeRow);
 
-    // Mount
+    shell.appendChild(footer);
+    menu.appendChild(sidebar);
+    menu.appendChild(shell);
     document.body.appendChild(menu);
 
-    // Standard: mittig, wenn keine Position gespeichert
+    // Default zentrieren, wenn keine Position gespeichert
     if (savedLeft === null || savedTop === null) {
       const rect = menu.getBoundingClientRect();
       const left = Math.max(10, (window.innerWidth - rect.width) / 2);
-      const top = Math.max(10, (window.innerHeight - rect.height) / 2);
+      const top  = Math.max(10, (window.innerHeight - rect.height) / 2);
       menu.style.left = `${left}px`; menu.style.top = `${top}px`; menu.style.right = 'auto';
     }
 
-    // Button actions
+    // Header-Buttons
     btnMin.onclick = () => {
       const isHidden = content.style.display === 'none';
       content.style.display = isHidden ? 'block' : 'none';
+      footer.style.display  = isHidden ? 'block' : 'none';
       btnMin.textContent = isHidden ? '−' : '+';
     };
     btnClose.onclick = () => menu.remove();
@@ -839,6 +875,7 @@
     // Dragging
     let dragging = false, offX = 0, offY = 0;
     header.onmousedown = (e) => {
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.classList.contains('cgpt-tab'))) return;
       dragging = true;
       const rect = menu.getBoundingClientRect();
       offX = e.clientX - rect.left;
@@ -848,7 +885,7 @@
     document.addEventListener('mousemove', (e) => {
       if (!dragging) return;
       menu.style.left = `${e.clientX - offX}px`;
-      menu.style.top = `${e.clientY - offY}px`;
+      menu.style.top  = `${e.clientY - offY}px`;
       menu.style.right = 'auto';
     });
     document.addEventListener('mouseup', () => {
@@ -867,7 +904,7 @@
 
     const histLimitRow = labeledNumber('Max. History-Einträge', ctx.settings.historyLimit, 1, 200, theme);
 
-    // Hotkeys (zwei Felder + Recorder)
+    // Hotkeys
     const hotNewRow = document.createElement('div');
     hotNewRow.style.display = 'grid';
     hotNewRow.style.gridTemplateColumns = '1fr auto';
@@ -914,7 +951,7 @@
     const autoCb = document.createElement('input'); autoCb.type='checkbox'; autoCb.checked = !!ctx.settings.autoSubmit;
     autoRow.appendChild(autoCb); autoRow.appendChild(document.createTextNode('Automatisch senden (nach Einfügen)'));
 
-    // Schalter „Alt+Q erzwingt New-Chat-Button“
+    // „Alt+Q immer Neuer Chat klicken“
     const forceNewRow = checkboxRow('Alt+Q: immer „Neuer Chat“ klicken', !!ctx.settings.forceNewClick, theme);
 
     // Nur mit Markierung / Im selben Tab
@@ -990,7 +1027,7 @@
       s.historyLimit = Number(histLimitRow.input.value) || DEFAULT_SETTINGS.historyLimit;
       s.size = sizeRow.select.value; s.theme = themeRow.select.value;
       s.autoSubmit = !!autoCb.checked;
-      s.forceNewClick = !!forceNewRow.cb.checked;          // speichern
+      s.forceNewClick = !!forceNewRow.cb.checked;
       s.hotkeyNew = (hotNewInput.value.trim() || DEFAULT_SETTINGS.hotkeyNew);
       s.hotkeyAppend = (hotAppendInput.value.trim() || DEFAULT_SETTINGS.hotkeyAppend);
       s.onlyWithSelection = !!onlySelRow.cb.checked;
@@ -1140,3 +1177,4 @@
   }
 
 })();
+
