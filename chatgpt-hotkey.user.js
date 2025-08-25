@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         chatgpt-hotkey
 // @namespace    http://tampermonkey.net/
-// @version      3.9.1
+// @version      3.10.0
 // @description  Alt+Q: neuer Chat (optional immer „Neuer Chat“ klicken) • Alt+W: in letzten Chat einfügen (mit Fallback-Nachfrage). Pro-Menü, Auto-Submit, Export/Import, Site-Toggle, Zielwahl, HUD/Toast. Robust: Hotkey-Handling, AltGr-Support, Input-Finder.
 // @match        *://*/*
 // @match        https://chatgpt.com/*
